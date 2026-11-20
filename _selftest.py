@@ -1,13 +1,33 @@
-"""离线自检：不启动 MaiBot，只验证导入、组件注册与纯函数逻辑。"""
+"""离线自检：不启动 MaiBot，只验证导入、组件注册与纯函数逻辑。
 
-import asyncio
+用法：
+    python _selftest.py
+    JM_TEST_ALBUM=<本子ID> python _selftest.py   # 额外跑详情与章节实测
+
+说明：本脚本按「包」方式加载同目录代码，因此不依赖仓库目录叫什么名字。
+"""
+
+import importlib.util
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+PKG_DIR = Path(__file__).resolve().parent
+PKG_NAME = "_jmcomic_under_test"
 
-from maibot_jmcomic_download import create_plugin  # noqa: E402
-from maibot_jmcomic_download.jm_client import (  # noqa: E402
+_spec = importlib.util.spec_from_file_location(
+    PKG_NAME,
+    PKG_DIR / "__init__.py",
+    submodule_search_locations=[str(PKG_DIR)],
+)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"无法加载插件包：{PKG_DIR}")
+_pkg = importlib.util.module_from_spec(_spec)
+sys.modules[PKG_NAME] = _pkg
+_spec.loader.exec_module(_pkg)
+
+from _jmcomic_under_test import create_plugin  # noqa: E402
+from _jmcomic_under_test.jm_client import (  # noqa: E402
     JMComicService,
     format_album_detail,
     parse_album_id,
@@ -53,16 +73,16 @@ check("Tool 名称", sorted(tool_names), ["jm_detail", "jm_download", "jm_search
 check("Tool/Command 不重名", bool(tool_names & command_names), False)
 
 print("\n== 3. 目标解析 ==")
-check("纯数字", parse_target("350234"), ("album", "350234"))
-check("本子链接", parse_target("https://18comic.vip/album/350234/foo"), ("album", "350234"))
-check("章节链接", parse_target("https://18comic.vip/photo/123456"), ("photo", "123456"))
-check("a 前缀", parse_target("a350234"), ("album", "350234"))
-check("p 前缀", parse_target("p123456"), ("photo", "123456"))
-check("query id", parse_target("https://x.com/x?id=9988"), ("album", "9988"))
-check("夹字", parse_target("350谁还没看过234"), ("album", "350234"))
+check("纯数字", parse_target("123456"), ("album", "123456"))
+check("本子链接", parse_target("https://example.org/album/123456/title"), ("album", "123456"))
+check("章节链接", parse_target("https://example.org/photo/654321"), ("photo", "654321"))
+check("a 前缀", parse_target("a123456"), ("album", "123456"))
+check("p 前缀", parse_target("p654321"), ("photo", "654321"))
+check("query id", parse_target("https://example.org/x?id=9988"), ("album", "9988"))
+check("夹字", parse_target("123谁还没看过456"), ("album", "123456"))
 check("空输入", parse_target("   "), None)
 check("无数字", parse_target("abc"), None)
-check("详情只认本子", parse_album_id("p123456"), None)
+check("详情只认本子", parse_album_id("p654321"), None)
 
 print("\n== 4. 章节表达式 ==")
 check("空=全部", parse_chapter_spec(""), None)
@@ -85,15 +105,20 @@ check("空名", sanitize_filename("   "), "comic")
 check("超长截断", len(sanitize_filename("x" * 100)), 60)
 
 print("\n== 6. 真实接口（搜索 + 详情）==")
+test_album = os.environ.get("JM_TEST_ALBUM", "").strip()
 try:
     svc = JMComicService()
     items = svc.search("test", page=1, limit=3)
     print(f"  ok   搜索返回 {len(items)} 条, 首条字段: {sorted(items[0].keys()) if items else '空'}")
-    detail = svc.album_detail("350234")
-    text = format_album_detail(detail, chapter_limit=5)
-    print(f"  ok   详情格式化 {len(text)} 字符, 章节数 {len(JMComicService.chapter_entries(detail))}")
-    pids, notice = svc.select_photos(detail, "", 5)
-    print(f"  ok   章节选择 -> {pids} | 提示: {notice or '无'}")
+
+    if not test_album:
+        print("  skip 未设置 JM_TEST_ALBUM，跳过详情与章节实测")
+    else:
+        detail = svc.album_detail(test_album)
+        text = format_album_detail(detail, chapter_limit=5)
+        print(f"  ok   详情格式化 {len(text)} 字符, 章节数 {len(JMComicService.chapter_entries(detail))}")
+        pids, notice = svc.select_photos(detail, "", 5)
+        print(f"  ok   章节选择 -> {pids} | 提示: {notice or '无'}")
 except Exception as exc:
     failures.append(f"真实接口失败: {exc}")
     print(f"  FAIL 真实接口: {type(exc).__name__}: {exc}")
@@ -101,7 +126,7 @@ except Exception as exc:
 print("\n== 结果 ==")
 if failures:
     print(f"{len(failures)} 项失败:")
-    for f in failures:
-        print("  -", f)
+    for item in failures:
+        print("  -", item)
     sys.exit(1)
 print("全部通过")

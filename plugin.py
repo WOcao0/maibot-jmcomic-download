@@ -247,7 +247,7 @@ class JMComicPlugin(MaiBotPlugin):
             ToolParameterInfo(
                 name="target",
                 param_type=ToolParamType.STRING,
-                description="本子 id（如 350234），也接受本子链接",
+                description="本子 id（纯数字，如 123456），也接受本子链接",
                 required=True,
             ),
         ],
